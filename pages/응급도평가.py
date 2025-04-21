@@ -4,44 +4,32 @@ import os
 import json
 import re
 from huggingface_hub import InferenceClient
+import requests
 from requests.exceptions import RequestException
 
 # ✅ Hugging Face API 키 로딩
-toml_path = os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml")
+# ✅ API 키 로딩
+toml_path = os.path.join(os.path.dirname(__file__), "..", ".streamlit", "secrets.toml")
 secrets = toml.load(toml_path)
 HF_API_KEY = secrets["huggingface"]["HUGGINGFACE_API_TOKEN"]
 
-# ✅ 모델 클라이언트
-client = InferenceClient(model="meta-llama/Meta-Llama-3.1-8B-Instruct", token=HF_API_KEY)
+# ✅ HuggingFace LLaMA 모델 클라이언트
+client = InferenceClient(
+    model="meta-llama/Meta-Llama-3.1-8B-Instruct",
+    token=HF_API_KEY
+)
 
-# ✅ 유틸 함수
-
-def remove_code_blocks(text: str) -> str:
-    return re.sub(r"```(?:json|python)?\\n?|```", "", text).strip()
-
-def extract_json_block(text: str) -> str:
-    matches = re.findall(r"\{.*\}\s*$", text, re.DOTALL | re.MULTILINE)
-    for block in matches:
-        try:
-            json.loads(block)
-            return block
-        except json.JSONDecodeError:
-            continue
-    raise ValueError("유효한 JSON 블록을 찾지 못했습니다.")
-
-def safe_parse_json(raw_text: str) -> dict:
-    clean = remove_code_blocks(raw_text)
-    valid_json_str = extract_json_block(clean)
-    return json.loads(valid_json_str)
-
-# ✅ UI 설정
-st.set_page_config(page_title="AI 진료 도우미", layout="centered")
-st.title("🩺 AI 진료 도우미")
-st.markdown("AI가 입력한 증상을 분석해 진료과, 주요 증상, 관련 질환 및 응급도까지 알려드립니다.")
+st.header("🚨 응급도 평가")
+st.markdown("증상을 입력하면 진료과, 증상 요약, 관련 질환 및 응급도까지 AI가 분석해줍니다.")
 
 # 사용자 입력
 user_input = st.text_input("🤔 어떤 증상이 있으신가요?", "")
 
+# 코드블럭 제거 함수
+def remove_code_blocks(text: str) -> str:
+    return re.sub(r"```(?:json|python)?\\n?|```", "", text).strip()
+
+# 분석 버튼 클릭 시
 if st.button("AI 분석 요청") and user_input:
     prompt = f"""
 다음 문장을 보고 적절한 진료과 1~2개, 증상 이름 및 설명, 관련 질환, 응급도를 JSON 형식으로 출력해줘.
@@ -63,7 +51,8 @@ JSON만 출력해줘. 설명/코드블럭 없이.
 
     try:
         raw_response = client.text_generation(prompt=prompt, max_new_tokens=384)
-        parsed = safe_parse_json(raw_response)
+        clean_response = remove_code_blocks(raw_response)
+        parsed = json.loads(clean_response)
 
         진료과 = parsed.get("진료과", [])
         증상 = parsed.get("증상", [])
@@ -73,24 +62,24 @@ JSON만 출력해줘. 설명/코드블럭 없이.
         if 진료과:
             st.markdown("## 🏥 추천 진료과")
             for idx, dep in enumerate(진료과, 1):
-                st.markdown(f"- 추천 진료과 {idx}: {dep}")
+                st.markdown(f"- **추천 진료과 {idx}**: {dep}")
 
         if 증상:
             st.markdown("## 💡 주요 증상 및 설명")
             for item in 증상:
-                st.markdown(f"- {item['이름']}: {item['설명']}")
+                st.markdown(f"- **{item['이름']}**: {item['설명']}")
 
         if 질환:
             st.markdown("## 🧬 관련 질환")
-            for item in 질환:
-                st.markdown(f"- {item['이름']}: {item['설명']}")
+            for j in 질환:
+                st.markdown(f"- **{j['이름']}**: {j['설명']}")
 
         if 응급도:
             st.markdown("## 🚨 응급도 평가")
             st.success(f"{응급도}")
 
         st.markdown("---")
-        st.info("🔎 이 결과는 참고용입니다. 증상이 계속되거나 악화된다면 반드시 전문의와 상담하세요.")
+        st.markdown("✅ 위 결과는 참고용입니다. 증상이 계속되면 병원 방문을 권장드립니다.")
 
     except Exception as e:
         st.error(f"❗ JSON 파싱 실패: {e}")
